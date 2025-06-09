@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Synth Parameter Controls</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        h1, h2 {
+            text-align: center;
+            color: #333;
+        }
+        .control-group {
+            background-color: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .control-group h2 {
+            margin-top: 0;
+            color: #444;
+        }
+        .slider-container {
+            margin-bottom: 15px;
+            position: relative;
+        }
+        .slider-container label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="range"] {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        .value-display {
+            font-weight: bold;
+        }
+        .response {
+            font-style: italic;
+            color: #666;
+        }
+        .voice-generator-container {
+            margin-bottom: 20px;
+        }
+        .voice-generator-container label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        select {
+            width: 100%;
+            padding: 5px;
+            font-size: 16px;
+        }
+        /* Styles for Randomize Button */
+        .randomize-button-container {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .randomize-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #007BFF;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .randomize-button:hover {
+            background-color: #0056b3;
+        }
+        /* Styles for Context Menu */
+        .custom-context-menu {
+            position: absolute;
+            z-index: 1000;
+            width: 200px;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
+            display: none;
+        }
+        .custom-context-menu ul {
+            list-style: none;
+            padding: 5px 0;
+            margin: 0;
+        }
+        .custom-context-menu li {
+            padding: 8px 20px;
+            cursor: pointer;
+        }
+        .custom-context-menu li:hover {
+            background-color: #f0f0f0;
+        }
+        /* Visual Indicator for Excluded Sliders */
+        .excluded-slider label {
+            color: #ff4d4d;
+        }
+        .excluded-slider .slider-excluded {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: #ff4d4d;
+            color: #fff;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+    </style>
+    <script>
+        let ws;
+        let lastReceivedVoiceGenerator = '';
+        // Object to keep track of excluded sliders
+        const excludedSliders = {};
+
+        // Reference to the custom context menu
+        let contextMenu = null;
+        // Currently selected slider parameter
+        let currentSliderParam = null;
+
+        function initializeWebSocket() {
+            console.log("Initializing WebSocket connection...");
+            ws = new WebSocket("ws://" + window.location.host + "/ws");
+
+            ws.onopen = function() {
+                console.log("WebSocket connection established.");
+            };
+
+            ws.onmessage = function(event) {
+                console.log("Received message:", event.data);
+                const message = JSON.parse(event.data);
+                if (message.type === "all_params") {
+                    console.log("Received all parameters. Creating sliders...");
+                    createSliders(message);
+                } else if (message.type === "param_update") {
+                    console.log("Received parameter update:", message.param, message.value);
+                    updateSliderValue(message.param, message.value);
+                } else if (message.type === "voice_generator_change") {
+                    console.log("Received voice generator change:", message.voiceGenerator);
+                    lastReceivedVoiceGenerator = message.voiceGenerator;
+                    updateVoiceGeneratorDropdown();
+                } else if (message.type === "all_voices") {
+                    console.log("Received all voices:", message.voiceGenerators);
+                    createVoiceGeneratorDropdown(message.voiceGenerators);
+                } else {
+                    console.log("Received unknown message type:", message.type);
+                }
+            };
+
+            ws.onclose = function() {
+                console.log("WebSocket connection closed.");
+            };
+        }
+
+        function createSliders(params) {
+            console.log("Creating sliders for parameters:", params);
+            const controls = document.getElementById('parameter-sliders');
+
+            // Clear existing sliders but keep the container intact
+            controls.innerHTML = ''; 
+
+            params.params.forEach(param => {
+                console.log("Creating slider for parameter:", param.name);
+                const container = document.createElement('div');
+                container.className = 'slider-container';
+                // Check if this slider is excluded
+                const isExcluded = excludedSliders[param.name] || false;
+                if (isExcluded) {
+                    container.classList.add('excluded-slider');
+                }
+                container.innerHTML = `
+                    <label for="slider-${param.name}">${param.name} (${param.unit}):</label>
+                    <input type="range" id="slider-${param.name}" min="${param.min}" max="${param.max}" step="${param.step}" value="${param.value}" oninput="onSliderInput('${param.name}', this.value)" oncontextmenu="showContextMenu(event, '${param.name}')">
+                    <p class="value-display">Value: <span id="value-${param.name}">${param.value}</span></p>
+                    ${isExcluded ? '<div class="slider-excluded">Excluded</div>' : ''}
+                `;
+                controls.appendChild(container);
+            });
+        }
+
+        function onSliderInput(paramName, value) {
+            console.log("Slider input:", paramName, value);
+            document.getElementById(`value-${paramName}`).innerText = value;
+            const message = {
+                param: paramName,
+                value: parseFloat(value)
+            };
+            console.log("Sending message to server:", message);
+            ws.send(JSON.stringify(message));
+        }
+
+        function updateSliderValue(paramName, value) {
+            console.log("Updating slider value:", paramName, value);
+            const slider = document.getElementById(`slider-${paramName}`);
+            if (slider) {
+                slider.value = value;
+                document.getElementById(`value-${paramName}`).innerText = value;
+            } else {
+                console.warn("Slider not found for parameter:", paramName);
+            }
+        }
+
+        function createVoiceGeneratorDropdown(voiceGenerators) {
+            console.log("Creating voice generator dropdown:", voiceGenerators);
+            const voiceGeneratorControls = document.getElementById('voice-generator-controls');
+            voiceGeneratorControls.innerHTML = ''; // Clear existing content
+
+            const container = document.createElement('div');
+            container.className = 'voice-generator-container';
+            container.innerHTML = `
+                <label for="voice-generator-select">Voice Generator:</label>
+                <select id="voice-generator-select" onchange="onVoiceGeneratorChange(this.value)">
+                    ${voiceGenerators.map(vg => `<option value="${vg}">${vg}</option>`).join('')}
+                </select>
+            `;
+            voiceGeneratorControls.appendChild(container);
+        }
+
+        function onVoiceGeneratorChange(voiceGeneratorName) {
+            console.log("Voice generator changed:", voiceGeneratorName);
+            const message = {
+                voiceGenerator: voiceGeneratorName
+            };
+            console.log("Sending message to server:", message);
+            ws.send(JSON.stringify(message));
+            lastReceivedVoiceGenerator = voiceGeneratorName;
+            updateVoiceGeneratorDropdown();
+        }
+
+        function randomizeParameters() {
+            console.log("Randomizing all parameters...");
+            const sliders = document.querySelectorAll('#parameter-sliders input[type="range"]');
+            sliders.forEach(slider => {
+                const paramName = slider.id.replace('slider-', '');
+                // Skip excluded sliders
+                if (excludedSliders[paramName]) {
+                    console.log(`Skipping excluded slider: ${paramName}`);
+                    return;
+                }
+                const min = parseFloat(slider.min);
+                const max = parseFloat(slider.max);
+                const step = parseFloat(slider.step);
+                const randomValue = getRandomValue(min, max, step);
+                // Set slider value
+                slider.value = randomValue;
+                // Update display
+                document.getElementById(`value-${paramName}`).innerText = randomValue;
+                // Send update to server
+                const message = {
+                    param: paramName,
+                    value: parseFloat(randomValue)
+                };
+                console.log(`Sending random value for ${paramName}:`, message);
+                ws.send(JSON.stringify(message));
+            });
+        }
+
+        function getRandomValue(min, max, step) {
+            const steps = Math.floor((max - min) / step);
+            const randomStep = Math.floor(Math.random() * (steps + 1));
+            return (min + randomStep * step).toFixed(decimalPlaces(step));
+        }
+
+        function decimalPlaces(step) {
+            const stepStr = step.toString();
+            if (stepStr.includes('.')) {
+                return stepStr.split('.')[1].length;
+            }
+            return 0;
+        }
+
+        // Context Menu Functions
+        function showContextMenu(event, paramName) {
+            event.preventDefault();
+            currentSliderParam = paramName;
+
+            // If context menu doesn't exist, create it
+            if (!contextMenu) {
+                contextMenu = document.createElement('div');
+                contextMenu.className = 'custom-context-menu';
+                contextMenu.innerHTML = `
+                    <ul>
+                        <li id="toggle-exclude">Exclude from Randomize</li>
+                    </ul>
+                `;
+                document.body.appendChild(contextMenu);
+
+                // Add event listener for menu items
+                contextMenu.addEventListener('click', function(e) {
+                    if (e.target.id === 'toggle-exclude') {
+                        toggleExcludeSlider(currentSliderParam);
+                        hideContextMenu();
+                    }
+                });
+
+                // Hide context menu on clicking elsewhere
+                document.addEventListener('click', function(e) {
+                    if (contextMenu && e.button !== 2) { // Not a right-click
+                        hideContextMenu();
+                    }
+                });
+            }
+
+            // Update menu text based on current state
+            const menuOption = document.getElementById('toggle-exclude');
+            if (excludedSliders[paramName]) {
+                menuOption.textContent = 'Include in Randomize';
+            } else {
+                menuOption.textContent = 'Exclude from Randomize';
+            }
+
+            // Position the context menu
+            contextMenu.style.top = `${event.pageY}px`;
+            contextMenu.style.left = `${event.pageX}px`;
+            contextMenu.style.display = 'block';
+        }
+
+        function hideContextMenu() {
+            if (contextMenu) {
+                contextMenu.style.display = 'none';
+            }
+        }
+
+        function toggleExcludeSlider(paramName) {
+            excludedSliders[paramName] = !excludedSliders[paramName];
+            console.log(`Slider '${paramName}' excluded from randomize: ${excludedSliders[paramName]}`);
+            // Update slider UI
+            const container = document.getElementById(`slider-${paramName}`).parentElement;
+            if (excludedSliders[paramName]) {
+                container.classList.add('excluded-slider');
+                // Add exclusion badge if not present
+                if (!container.querySelector('.slider-excluded')) {
+                    const badge = document.createElement('div');
+                    badge.className = 'slider-excluded';
+                    badge.textContent = 'Excluded';
+                    container.appendChild(badge);
+                }
+            } else {
+                container.classList.remove('excluded-slider');
+                // Remove exclusion badge if present
+                const badge = container.querySelector('.slider-excluded');
+                if (badge) {
+                    container.removeChild(badge);
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log("DOM content loaded. Initializing WebSocket...");
+            initializeWebSocket();
+        });
+    </script>
+</head>
+<body>
+    <h1>Synth Parameter Controls</h1>
+    
+    <div id="voice-generator-controls" class="control-group">
+        <h2>Voice Generator</h2>
+        <!-- Voice generator dropdown will be dynamically added here -->
+    </div>
+    
+    <div id="parameter-controls" class="control-group">
+        <h2>Parameters</h2>
+        <div id="parameter-sliders">
+            <!-- Parameter sliders will be dynamically added here -->
+        </div>
+        <!-- Static Randomize Button -->
+        <div class="randomize-button-container">
+            <button class="randomize-button" onclick="randomizeParameters()">Randomize</button>
+        </div>
+    </div>
+</body>
+</html>
