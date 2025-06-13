@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
 #include <windows.h>
 #include <mmsystem.h>
 #include <memory>
@@ -12,6 +16,7 @@
 #include <cmath>
 #include "ActiveTones.cpp"
 #include "civetweb.h"
+#include "StaticServer.h"
 #include "Parameter.cpp"      // Include the Parameter class definition
 #include <sstream>          // For std::ostringstream
 #include <string>           // For std::string
@@ -238,8 +243,6 @@ public:
           activeTones(activeTonesPtr), ctx(nullptr) {}
 
     bool initialize() {
-        mg_init_library(0);
-
         // Get the executable's path
         char exePath[MAX_PATH];
         GetModuleFileNameA(NULL, exePath, MAX_PATH);
@@ -253,9 +256,18 @@ public:
         // Change to the executable's directory
         SetCurrentDirectoryA(exePath);
 
+        // Start the static file server on port 8080
+        staticServer = std::make_unique<StaticServer>("./", 8080);
+        if (!staticServer->start()) {
+            std::cerr << "Failed to start static server on port 8080" << std::endl;
+            return false;
+        }
+
+        // Initialize CivetWeb for WebSocket handling only on port 8081
+        mg_init_library(0);
+
         const char *options[] = {
-            "document_root", "./",
-            "listening_ports", "8080",
+            "listening_ports", "8082",
             nullptr
         };
 
@@ -272,7 +284,8 @@ public:
 
         ctx = mg_start2(&mg_start_init_data, &mg_start_error_data);
         if (!ctx) {
-            std::cerr << "Cannot start server: " << errtxtbuf << std::endl;
+            std::cerr << "Cannot start WebSocket server: " << errtxtbuf << std::endl;
+            staticServer->stop();
             return false;
         }
 
@@ -284,7 +297,8 @@ public:
                                  ws_close_handler,
                                  this);
 
-        std::cout << "WebSocket server started on port 8080." << std::endl;
+        std::cout << "Static server started on port 8080." << std::endl;
+        std::cout << "WebSocket server started on port 8082." << std::endl;
         
         // Open the default web browser
         openDefaultBrowser();
@@ -293,6 +307,10 @@ public:
     }
 
     void shutdown() {
+        if (staticServer) {
+            staticServer->stop();
+            staticServer.reset();
+        }
         if (ctx) {
             mg_stop(ctx);
             ctx = nullptr;
@@ -305,6 +323,7 @@ private:
     const VoiceGeneratorRepository& voiceGeneratorRepo;
     std::shared_ptr<ActiveTones> activeTones;
     struct mg_context *ctx;
+    std::unique_ptr<StaticServer> staticServer;
 
     std::vector<struct mg_connection*> connections;
     std::mutex connectionsMutex;

@@ -127,7 +127,7 @@
 
         function initializeWebSocket() {
             console.log("Initializing WebSocket connection...");
-            ws = new WebSocket("ws://" + window.location.host + "/ws");
+            ws = new WebSocket("ws://" + window.location.hostname + ":8082/ws");
 
             ws.onopen = function() {
                 console.log("WebSocket connection established.");
