@@ -125,16 +125,16 @@
         // Currently selected slider parameter
         let currentSliderParam = null;
 
-        function initializeWebSocket() {
-            console.log("Initializing WebSocket connection...");
-            ws = new WebSocket("ws://" + window.location.hostname + ":8082/ws");
+        function initializeSSE() {
+            console.log("Initializing SSE connection...");
+            const eventSource = new EventSource('/events');
 
-            ws.onopen = function() {
-                console.log("WebSocket connection established.");
+            eventSource.onopen = function() {
+                console.log("SSE connection established.");
             };
 
-            ws.onmessage = function(event) {
-                console.log("Received message:", event.data);
+            eventSource.onmessage = function(event) {
+                console.log("Received SSE message:", event.data);
                 const message = JSON.parse(event.data);
                 if (message.type === "all_params") {
                     console.log("Received all parameters. Creating sliders...");
@@ -154,8 +154,12 @@
                 }
             };
 
-            ws.onclose = function() {
-                console.log("WebSocket connection closed.");
+            eventSource.onerror = function(event) {
+                console.log("SSE connection error:", event);
+            };
+
+            eventSource.onclose = function() {
+                console.log("SSE connection closed.");
             };
         }
 
@@ -192,8 +196,17 @@
                 param: paramName,
                 value: parseFloat(value)
             };
-            console.log("Sending message to server:", message);
-            ws.send(JSON.stringify(message));
+            console.log("Sending parameter update to server:", message);
+            
+            fetch('/api/parameter', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(message)
+            }).catch(error => {
+                console.error('Error sending parameter update:', error);
+            });
         }
 
         function updateSliderValue(paramName, value) {
@@ -228,8 +241,18 @@
             const message = {
                 voiceGenerator: voiceGeneratorName
             };
-            console.log("Sending message to server:", message);
-            ws.send(JSON.stringify(message));
+            console.log("Sending voice change to server:", message);
+            
+            fetch('/api/voice', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(message)
+            }).catch(error => {
+                console.error('Error sending voice change:', error);
+            });
+            
             lastReceivedVoiceGenerator = voiceGeneratorName;
             updateVoiceGeneratorDropdown();
         }
@@ -258,7 +281,16 @@
                     value: parseFloat(randomValue)
                 };
                 console.log(`Sending random value for ${paramName}:`, message);
-                ws.send(JSON.stringify(message));
+                
+                fetch('/api/parameter', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(message)
+                }).catch(error => {
+                    console.error('Error sending random parameter:', error);
+                });
             });
         }
 
@@ -353,8 +385,8 @@
         }
 
         document.addEventListener('DOMContentLoaded', function() {
-            console.log("DOM content loaded. Initializing WebSocket...");
-            initializeWebSocket();
+            console.log("DOM content loaded. Initializing SSE...");
+            initializeSSE();
         });
     </script>
 </head>

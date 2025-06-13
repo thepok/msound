@@ -21,7 +21,6 @@
 #include <memory>
 #include <chrono>
 #include <functional>
-#include "civetweb.h"
 #include "Effects.cpp"
 #include "SoundGenerator.cpp"
 #include "Parameter.cpp"

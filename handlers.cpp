@@ -15,8 +15,9 @@
 #include <map>
 #include <cmath>
 #include "ActiveTones.cpp"
-#include "civetweb.h"
 #include "StaticServer.h"
+#include "SSEServer.h"
+#include "HTTPAPIHandler.h"
 #include "Parameter.cpp"      // Include the Parameter class definition
 #include <sstream>          // For std::ostringstream
 #include <string>           // For std::string
@@ -240,7 +241,7 @@ public:
                   const VoiceGeneratorRepository& voiceRepo,
                   std::shared_ptr<ActiveTones> activeTonesPtr)
         : soundGenerator(soundGeneratorPtr), voiceGeneratorRepo(voiceRepo),
-          activeTones(activeTonesPtr), ctx(nullptr) {}
+          activeTones(activeTonesPtr) {}
 
     bool initialize() {
         // Get the executable's path
@@ -256,49 +257,34 @@ public:
         // Change to the executable's directory
         SetCurrentDirectoryA(exePath);
 
-        // Start the static file server on port 8080
+        // Create SSE server
+        sseServer = std::make_shared<SSEServer>();
+        sseServer->setInitialStateCallback([this](socket_t clientSocket) {
+            std::string allParamsJson = getAllParametersJSON();
+            std::string allVoicesJson = getAllVoicesJSON();
+            sseServer->sendInitialState(clientSocket, allParamsJson, allVoicesJson);
+        });
+        
+        // Create HTTP API handler
+        httpAPIHandler = std::make_shared<HTTPAPIHandler>();
+        httpAPIHandler->setParameterUpdateCallback([this](const std::string& name, float value) {
+            updateParameter(name, value);
+        });
+        httpAPIHandler->setVoiceChangeCallback([this](const std::string& voiceName) {
+            changeVoiceGenerator(voiceName);
+        });
+
+        // Create and configure static server
         staticServer = std::make_unique<StaticServer>("./", 8080);
+        staticServer->setSSEServer(sseServer);
+        staticServer->setHTTPAPIHandler(httpAPIHandler);
+
         if (!staticServer->start()) {
             std::cerr << "Failed to start static server on port 8080" << std::endl;
             return false;
         }
 
-        // Initialize CivetWeb for WebSocket handling only on port 8081
-        mg_init_library(0);
-
-        const char *options[] = {
-            "listening_ports", "8082",
-            nullptr
-        };
-
-        struct mg_callbacks callbacks = {0};
-        struct mg_init_data mg_start_init_data = {0};
-        mg_start_init_data.callbacks = &callbacks;
-        mg_start_init_data.user_data = this;
-        mg_start_init_data.configuration_options = options;
-
-        struct mg_error_data mg_start_error_data = {0};
-        char errtxtbuf[256] = {0};
-        mg_start_error_data.text = errtxtbuf;
-        mg_start_error_data.text_buffer_size = sizeof(errtxtbuf);
-
-        ctx = mg_start2(&mg_start_init_data, &mg_start_error_data);
-        if (!ctx) {
-            std::cerr << "Cannot start WebSocket server: " << errtxtbuf << std::endl;
-            staticServer->stop();
-            return false;
-        }
-
-        mg_set_websocket_handler(ctx,
-                                 "/ws",
-                                 ws_connect_handler,
-                                 ws_ready_handler,
-                                 ws_data_handler,
-                                 ws_close_handler,
-                                 this);
-
-        std::cout << "Static server started on port 8080." << std::endl;
-        std::cout << "WebSocket server started on port 8082." << std::endl;
+        std::cout << "Server started on port 8080 (Static files, SSE, and API)" << std::endl;
         
         // Open the default web browser
         openDefaultBrowser();
@@ -307,114 +293,24 @@ public:
     }
 
     void shutdown() {
+        if (sseServer) {
+            sseServer->cleanup();
+        }
         if (staticServer) {
             staticServer->stop();
             staticServer.reset();
         }
-        if (ctx) {
-            mg_stop(ctx);
-            ctx = nullptr;
-        }
-        mg_exit_library();
     }
 
 private:
     std::shared_ptr<SoundGenerator> soundGenerator;
     const VoiceGeneratorRepository& voiceGeneratorRepo;
     std::shared_ptr<ActiveTones> activeTones;
-    struct mg_context *ctx;
     std::unique_ptr<StaticServer> staticServer;
+    std::shared_ptr<SSEServer> sseServer;
+    std::shared_ptr<HTTPAPIHandler> httpAPIHandler;
 
-    std::vector<struct mg_connection*> connections;
-    std::mutex connectionsMutex;
-
-    static int ws_connect_handler(const struct mg_connection *conn, void *user_data) {
-        ServerHandler *handler = static_cast<ServerHandler*>(user_data);
-        std::lock_guard<std::mutex> lock(handler->connectionsMutex);
-        handler->connections.push_back(const_cast<struct mg_connection*>(conn));
-        std::cout << "New WebSocket connection established." << std::endl;
-        return 0;
-    }
-
-    static void ws_ready_handler(struct mg_connection *conn, void *user_data) {
-        ServerHandler *handler = static_cast<ServerHandler*>(user_data);
-        handler->sendAllParameters(conn);
-        handler->sendAllVoices(conn);
-    }
-
-    static int ws_data_handler(struct mg_connection *conn, int opcode, char *data, size_t datasize, void *user_data) {
-        ServerHandler *handler = static_cast<ServerHandler*>(user_data);
-        std::string msg(data, datasize);
-        std::cout << "Received message: [" << msg << "]" << std::endl;
-
-        // Parse the JSON message
-        std::string paramName;
-        float paramValue = 0.0f;
-        std::string voiceGeneratorName;
-
-        size_t paramPos = msg.find("\"param\":\"");
-        if (paramPos != std::string::npos) {
-            size_t start = paramPos + 9; // Length of "\"param\":\""
-            size_t end = msg.find("\"", start);
-            if (end != std::string::npos) {
-                paramName = msg.substr(start, end - start);
-            }
-        }
-
-        size_t valuePos = msg.find("\"value\":");
-        if (valuePos != std::string::npos) {
-            size_t start = valuePos + 8; // Length of "\"value\":"
-            size_t end = msg.find("}", start);
-            if (end != std::string::npos) {
-                try {
-                    paramValue = std::stof(msg.substr(start, end - start));
-                } catch (const std::invalid_argument& e) {
-                    std::cerr << "Invalid value format: " << e.what() << std::endl;
-                }
-            }
-        }
-
-    size_t firstQuote = msg.find('"');
-    size_t secondQuote = msg.find('"', firstQuote + 1);
-    size_t thirdQuote = msg.find('"', secondQuote + 1);
-    size_t fourthQuote = msg.find('"', thirdQuote + 1);
-
-    if (thirdQuote != std::string::npos && fourthQuote != std::string::npos) {
-        std::string key = msg.substr(firstQuote + 1, secondQuote - firstQuote - 1);
-        std::string value = msg.substr(thirdQuote + 1, fourthQuote - thirdQuote - 1);
-        
-        if (key == "voiceGenerator") {
-            std::cout << "Changing voice generator to: " << value << std::endl;
-            handler->changeVoiceGenerator(value);
-            std::cout << "Voice generator changed successfully to: " << value << std::endl;
-        }
-        // Add more key handling as needed
-    } else {
-        std::cout << "voiceGenerator key not found in the message" << std::endl;
-    }
-
-        if (!paramName.empty()) {
-            handler->updateParameter(paramName, paramValue);
-        } else if (!voiceGeneratorName.empty()) {
-            std::cout << "Changing voice generator to: " << voiceGeneratorName << std::endl;
-            handler->changeVoiceGenerator(voiceGeneratorName);
-            std::cout << "Voice generator changed successfully to: " << voiceGeneratorName << std::endl;
-        }
-
-        return 1;
-    }
-
-    static void ws_close_handler(const struct mg_connection *conn, void *user_data) {
-        ServerHandler *handler = static_cast<ServerHandler*>(user_data);
-        std::lock_guard<std::mutex> lock(handler->connectionsMutex);
-        handler->connections.erase(
-            std::remove(handler->connections.begin(), handler->connections.end(), const_cast<struct mg_connection*>(conn)),
-            handler->connections.end()
-        );
-        std::cout << "WebSocket connection closed." << std::endl;
-    }
-
-    void sendAllParameters(struct mg_connection *conn) {
+    std::string getAllParametersJSON() {
         std::ostringstream oss;
         oss << "{\"type\":\"all_params\",\"params\":[";
     
@@ -432,12 +328,10 @@ private:
             }
         }
         oss << "]}";
-
-        std::string msg = oss.str();
-        mg_websocket_write(conn, MG_WEBSOCKET_OPCODE_TEXT, msg.c_str(), msg.length());
+        return oss.str();
     }
 
-    void sendAllVoices(struct mg_connection *conn) {
+    std::string getAllVoicesJSON() {
         std::ostringstream oss;
         oss << "{\"type\":\"all_voices\",\"voiceGenerators\":[";
 
@@ -449,21 +343,12 @@ private:
             }
         }
         oss << "]}";
-
-        std::string msg = oss.str();
-        mg_websocket_write(conn, MG_WEBSOCKET_OPCODE_TEXT, msg.c_str(), msg.length());
+        return oss.str();
     }
 
     void broadcastParameterUpdate(const std::string& paramName, float paramValue) {
-        std::ostringstream oss;
-        oss << "{\"type\":\"param_update\","
-            << "\"param\":\"" << paramName << "\","
-            << "\"value\":" << paramValue << "}";
-
-        std::string msg = oss.str();
-        std::lock_guard<std::mutex> lock(connectionsMutex);
-        for (auto conn : connections) {
-            mg_websocket_write(conn, MG_WEBSOCKET_OPCODE_TEXT, msg.c_str(), msg.length());
+        if (sseServer) {
+            sseServer->broadcastParameterUpdate(paramName, paramValue);
         }
     }
 
@@ -487,9 +372,9 @@ private:
             broadcastVoiceGeneratorChange(voiceGeneratorName);
             
             // Rebroadcast all parameters after voice change
-            std::lock_guard<std::mutex> lock(connectionsMutex);
-            for (auto conn : connections) {
-                sendAllParameters(conn);
+            if (sseServer) {
+                std::string allParamsJson = getAllParametersJSON();
+                sseServer->broadcastSSEEvent(allParamsJson);
             }
         } catch (const std::runtime_error& e) {
             std::cerr << "Error changing voice generator: " << e.what() << std::endl;
@@ -497,14 +382,8 @@ private:
     }
 
     void broadcastVoiceGeneratorChange(const std::string& voiceGeneratorName) {
-        std::ostringstream oss;
-        oss << "{\"type\":\"voice_generator_change\","
-            << "\"voiceGenerator\":\"" << voiceGeneratorName << "\"}";
-
-        std::string msg = oss.str();
-        std::lock_guard<std::mutex> lock(connectionsMutex);
-        for (auto conn : connections) {
-            mg_websocket_write(conn, MG_WEBSOCKET_OPCODE_TEXT, msg.c_str(), msg.length());
+        if (sseServer) {
+            sseServer->broadcastVoiceChange(voiceGeneratorName);
         }
     }
 
