@@ -42,8 +42,7 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
-# IDE and Editor files
-.vscode/
+# IDE and Editor files (keep .vscode for build config)
 .vs/
 *.vcxproj.user
 *.sln.docstates
