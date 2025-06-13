@@ -1,9 +1,3 @@
-#include "VoiceGeneratorRepository.cpp"
-#include "ADSRGenerator.cpp"
-#include "Effects.cpp"
-#include "Voices.cpp"
-#include "Mixer.cpp"
-
 void loadPresets(VoiceGeneratorRepository& voiceRepo) {
     voiceRepo.addVoiceGenerator("FM Voice", [](float frequency, float volume) {
         return std::make_shared<ADSRGenerator>(std::make_shared<FMVoice>(frequency, frequency / 2.111f, 0.75f));
