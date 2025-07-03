@@ -3,6 +3,7 @@
 #include <vector>
 #include <cmath>
 #include <memory>
+#include <random>
 #include "SoundGenerator.cpp"
 #include "math.cpp"
 #include <functional>
@@ -19,7 +20,13 @@ enum class Waveform {
 class Oscillator : public SoundGenerator {
 public:
     Oscillator(float frequency = 440.0f, float volume = 1.0f, Waveform waveform = Waveform::Sine)
-        : frequency(frequency), volume(volume), phase(0.0f), waveform(waveform) {}
+        : frequency(frequency), volume(volume), waveform(waveform) {
+        // Randomize initial phase to prevent phase alignment issues
+        static std::random_device rd;
+        static std::mt19937 gen(rd());
+        static std::uniform_real_distribution<float> dis(0.0f, 2.0f * PI);
+        phase = dis(gen);
+    }
 
     float generateSample(float sampleRate) override {
         float sampleValue = 0.0f;

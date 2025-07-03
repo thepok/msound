@@ -68,5 +68,6 @@
         "unordered_map": "cpp",
         "xhash": "cpp",
         "xtree": "cpp"
-    }
+    },
+    "C_Cpp.default.compilerPath": "d:\\compiler\\mingw64\\bin\\c++.exe"
 }

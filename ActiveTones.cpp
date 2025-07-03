@@ -6,6 +6,7 @@
 #include <iostream>
 #include <functional>
 #include <cmath>
+#include <random>
 #include "SoundGenerator.cpp"
 
 // Total number of MIDI notes
@@ -35,16 +36,24 @@ public:
             }
         }
 
-        float targetGainFactor = (activeToneCount > 0) ? 1.0f / std::sqrt(activeToneCount) : 1.0f;
+        // Improved volume normalization for chord handling
+        float targetGainFactor = 1.0f;
+        if (activeToneCount > 0) {
+            // Use a combination of sqrt normalization and logarithmic scaling for better chord balance
+            float sqrtNorm = 1.0f / std::sqrt(static_cast<float>(activeToneCount));
+            float logNorm = 1.0f / (1.0f + 0.3f * std::log(static_cast<float>(activeToneCount)));
+            targetGainFactor = sqrtNorm * logNorm;
+        }
         
         // Smooth the gain factor transition
         float smoothingFactor = 0.001f;  // Adjust this value to control smoothing speed
         smoothedGainFactor += smoothingFactor * (targetGainFactor - smoothedGainFactor);
 
         sample *= smoothedGainFactor;
-        sample = std::tanh(sample);
-        // std::cout << "sample: " << sample << std::endl;
-
+        
+        // Soft saturation instead of hard tanh for more musical distortion
+        sample = sample / (1.0f + std::abs(sample) * 0.3f);
+        
         return sample;
     }
 
@@ -72,6 +81,17 @@ public:
         std::cout << "Deactivated ADSRGenerator for MIDI Note " << midiNote << std::endl;
     }
 
+    // Override base class virtual methods to avoid hiding warnings
+    void noteOn(float velocity) override {
+        // Default implementation - could be used for all notes or ignored
+        // This overrides the base class virtual method
+    }
+
+    void noteOff() override {
+        // Default implementation - could be used to turn off all notes or ignored
+        // This overrides the base class virtual method
+    }
+
     void setVoiceGenerator(const SoundGeneratorFactory& newVoiceGenerator) {
         std::lock_guard<std::mutex> lock(tonesMutex);
         
@@ -81,7 +101,15 @@ public:
         // Reinitialize all SoundGenerators with the new factory
         for (int note = 0; note < MIDI_NOTE_COUNT; ++note) {
             float frequency = midiNoteToFrequency(note);
-            activeTones[note] = std::shared_ptr<SoundGenerator>(newVoiceGenerator(frequency, 1.0f));
+            
+            // Add slight random frequency offset to reduce phase coherence and beating
+            static std::random_device rd;
+            static std::mt19937 gen(rd());
+            std::uniform_real_distribution<float> detune(-0.001f, 0.001f);
+            float randomDetune = detune(gen);
+            float detuned_frequency = frequency * (1.0f + randomDetune);
+            
+            activeTones[note] = std::shared_ptr<SoundGenerator>(newVoiceGenerator(detuned_frequency, 1.0f));
         }
         
         // Group parameters by name

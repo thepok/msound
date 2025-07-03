@@ -1,5 +1,3 @@
-#pragma once
-
 #include <vector>
 #include <unordered_map>
 #include <memory>
@@ -19,13 +17,14 @@ public:
                   float sustain = 0.7f,
                   float release = 0.3f)
         : sourceGenerator(source),
-          stage(Stage::Idle), currentAmplitude(0.0f),
-          active(false), deactivationRequested(false),
-          lastSample(0.0f),
           attackTime(attack),
           decayTime(decay),
           sustainLevel(sustain),
-          releaseTime(release) {
+          releaseTime(release),
+          stage(Stage::Idle),
+          currentAmplitude(0.0f),
+          active(false),
+          deactivationRequested(false) {
         
         // Initialize ADSR parameters with callbacks
         Attack = addParam(std::make_unique<Parameter>("Attack", attack, 0.01f, 10.0f, 0.01f, "s", [this](float newValue) {
@@ -52,12 +51,9 @@ public:
 
         float sample = sourceGenerator->generateSample(sampleRate);
 
-        // Check for zero crossing and update envelope if crossed
-        if ((lastSample <= 0 && sample > 0) || (lastSample >= 0 && sample < 0)) {
-            updateEnvelope();
-        }
+        // Update envelope on every sample for accurate timing
+        updateEnvelope(sampleRate);
 
-        lastSample = sample;
         return sample * currentAmplitude;
     }
 
@@ -112,9 +108,7 @@ private:
     bool active;
     bool deactivationRequested;
 
-    float lastSample;
-
-    void updateEnvelope() {
+    void updateEnvelope(float sampleRate) {
         auto now = std::chrono::steady_clock::now();
         float elapsed = std::chrono::duration<float>(now - stageStartTime).count();
 
