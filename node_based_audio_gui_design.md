@@ -82,66 +82,67 @@ Node {
 - **Automation**: Time-based parameter changes
 - **Expressions**: Mathematical formulas combining multiple inputs
 
-## GUI Framework Options
+## Architecture: C++ Backend + JavaScript Frontend
 
-### 1. Web-Based (HTML5/JavaScript)
-**Pros:**
-- Cross-platform compatibility
-- Rich ecosystem of audio libraries (Web Audio API)
-- Easy to deploy and update
-- Modern UI frameworks available
+### Overall System Design
+The system uses a **C++ backend** for high-performance audio processing and a **JavaScript frontend** for the user interface, connected via a communication protocol.
 
-**Cons:**
-- Audio latency limitations
-- Browser security restrictions
-- Performance constraints for real-time audio
+```
+┌─────────────────────┐    Communication    ┌──────────────────────┐
+│   JavaScript UI     │◄──────────────────►│   C++ Audio Engine   │
+│   - Node Editor     │    WebSocket/HTTP   │   - Audio Processing │
+│   - Parameter UI    │    JSON Messages    │   - MIDI Handling    │
+│   - Visualization   │                     │   - File I/O         │
+└─────────────────────┘                     └──────────────────────┘
+```
 
-**Key Libraries:**
-- **Canvas/SVG**: For node rendering
-- **Web Audio API**: For audio processing
-- **Tone.js**: Higher-level audio framework
-- **React Flow / Vue Flow**: Pre-built node editor components
+### C++ Backend Architecture
 
-### 2. Desktop Native (Electron + Web Tech)
-**Pros:**
-- Native OS integration
-- Better performance than pure web
-- Access to system audio APIs
-- File system access
+#### Core Components
+- **Audio Engine**: Real-time audio processing using JUCE/RtAudio
+- **Node Graph Manager**: Maintains node connections and processing order
+- **Parameter System**: Handles real-time parameter changes
+- **Communication Server**: WebSocket/HTTP server for frontend communication
+- **Audio I/O**: System audio interface management
 
-**Cons:**
-- Larger app size
-- Still has some web limitations
-- Complex audio routing
+#### Recommended C++ Libraries
+- **JUCE**: Professional audio application framework
+- **RtAudio**: Cross-platform audio I/O
+- **RtMidi**: Cross-platform MIDI I/O  
+- **nlohmann/json**: JSON parsing and serialization
+- **WebSocket++**: WebSocket server implementation
+- **cpprest**: HTTP REST API framework
 
-### 3. Native Desktop (Qt/GTK/Dear ImGui)
-**Pros:**
-- Maximum performance
-- Direct hardware access
-- Low audio latency
-- Platform-specific optimizations
+#### Backend Responsibilities
+- Real-time audio processing (44.1kHz/48kHz)
+- Audio buffer management and threading
+- MIDI input/output handling
+- Audio file loading and streaming
+- DSP algorithm implementation
+- System audio device management
 
-**Cons:**
-- Platform-specific development
-- More complex UI development
-- Steeper learning curve
+### JavaScript Frontend Architecture
 
-**Recommended Stack:**
-- **Qt**: Cross-platform with excellent audio support
-- **JUCE**: Specialized audio application framework
-- **Dear ImGui**: Immediate mode GUI for real-time applications
+#### Core Components
+- **Node Editor**: Visual node manipulation interface
+- **Parameter Controls**: Real-time parameter adjustment
+- **Connection Manager**: Visual connection drawing and management
+- **Communication Client**: WebSocket/HTTP client for backend communication
+- **State Management**: Frontend state synchronization
 
-### 4. Game Engine Based (Unity/Godot)
-**Pros:**
-- Built-in node editors
-- Excellent 2D/3D rendering
-- Cross-platform deployment
-- Visual scripting capabilities
+#### Recommended JS Libraries
+- **React Flow** or **Vue Flow**: Pre-built node editor components
+- **D3.js**: Custom node visualization if needed
+- **Socket.io**: WebSocket communication
+- **Tone.js**: Frontend audio preview (optional)
+- **Web Audio API**: Simple audio feedback/preview
 
-**Cons:**
-- Overkill for audio-only applications
-- Less audio-focused ecosystem
-- Licensing considerations
+#### Frontend Responsibilities
+- Node graph visualization and editing
+- Parameter UI controls (knobs, sliders, etc.)
+- Real-time visual feedback
+- Project management interface
+- User interaction handling
 
 ## User Interface Design
 
@@ -174,16 +175,225 @@ Node {
 - **Toggle buttons**: Boolean parameters
 - **Waveform displays**: Visual representation of audio signals
 
-## Audio Processing Pipeline
+## Communication Protocol (Frontend ↔ Backend)
+
+### Message Types
+```json
+{
+  "type": "command",
+  "action": "create_node",
+  "data": {
+    "nodeType": "oscillator",
+    "position": {"x": 100, "y": 200},
+    "parameters": {"frequency": 440, "waveform": "sine"}
+  }
+}
+```
+
+### Core Message Categories
+- **Node Operations**: create, delete, move, configure nodes
+- **Connection Operations**: connect, disconnect node sockets
+- **Parameter Updates**: real-time parameter changes
+- **Transport Control**: play, stop, record, tempo changes
+- **State Sync**: full graph synchronization
+- **Audio Feedback**: level meters, spectrum data
+
+### WebSocket Implementation
+```cpp
+// C++ Backend WebSocket Handler
+class AudioEngineWebSocket {
+    void onMessage(const std::string& message) {
+        json msg = json::parse(message);
+        if (msg["type"] == "parameter_update") {
+            updateNodeParameter(msg["nodeId"], msg["parameter"], msg["value"]);
+        }
+    }
+    
+    void sendLevelData() {
+        json response = {
+            {"type", "level_update"},
+            {"levels", getCurrentLevels()}
+        };
+        broadcast(response.dump());
+    }
+};
+```
+
+### Real-Time Parameter Updates
+- **Atomic updates**: Thread-safe parameter changes
+- **Value smoothing**: Prevent audio clicks from sudden changes
+- **Update rate limiting**: Balance responsiveness with performance
+- **Batch updates**: Group related parameter changes
+
+## C++ Backend Implementation
+
+### Core Classes Structure
+```cpp
+class AudioEngine {
+    std::unique_ptr<AudioProcessor> processor;
+    std::unique_ptr<NodeGraphManager> nodeGraph;
+    std::unique_ptr<ParameterManager> parameters;
+    std::unique_ptr<WebSocketServer> webServer;
+    
+public:
+    void processAudio(float* input, float* output, int frameCount);
+    void handleMessage(const std::string& message);
+    void updateParameter(int nodeId, const std::string& param, float value);
+};
+
+class Node {
+    int id;
+    NodeType type;
+    std::vector<InputSocket> inputs;
+    std::vector<OutputSocket> outputs;
+    std::map<std::string, Parameter> parameters;
+    
+public:
+    virtual void process(AudioBuffer& buffer) = 0;
+    virtual void setParameter(const std::string& name, float value) = 0;
+};
+
+class NodeGraphManager {
+    std::vector<std::unique_ptr<Node>> nodes;
+    std::vector<Connection> connections;
+    std::vector<int> processingOrder;
+    
+public:
+    void addNode(std::unique_ptr<Node> node);
+    void connectNodes(int fromNode, int fromSocket, int toNode, int toSocket);
+    void updateProcessingOrder();
+};
+```
+
+### Audio Processing Thread
+```cpp
+void AudioEngine::audioCallback(float* input, float* output, int frameCount) {
+    // Process nodes in topological order
+    for (int nodeId : processingOrder) {
+        nodes[nodeId]->process(audioBuffer);
+    }
+    
+    // Copy final output
+    std::memcpy(output, audioBuffer.data(), frameCount * sizeof(float));
+    
+    // Send level data to frontend (non-blocking)
+    if (shouldSendLevelData()) {
+        levelDataQueue.push(getCurrentLevels());
+    }
+}
+```
+
+### Parameter Management
+```cpp
+class ParameterManager {
+    struct Parameter {
+        std::atomic<float> value;
+        float minValue, maxValue;
+        std::string name;
+        std::function<void(float)> callback;
+    };
+    
+    std::map<int, std::map<std::string, Parameter>> nodeParameters;
+    
+public:
+    void updateParameter(int nodeId, const std::string& name, float value) {
+        auto& param = nodeParameters[nodeId][name];
+        param.value.store(value);
+        if (param.callback) {
+            param.callback(value);
+        }
+    }
+};
+```
+
+## JavaScript Frontend Implementation
+
+### Node Editor Setup
+```javascript
+// React Flow implementation
+import ReactFlow, { Background, Controls } from 'react-flow-renderer';
+
+function NodeEditor() {
+    const [nodes, setNodes] = useState([]);
+    const [edges, setEdges] = useState([]);
+    const [websocket, setWebSocket] = useState(null);
+    
+    useEffect(() => {
+        const ws = new WebSocket('ws://localhost:8080');
+        ws.onmessage = handleBackendMessage;
+        setWebSocket(ws);
+    }, []);
+    
+    const handleBackendMessage = (event) => {
+        const message = JSON.parse(event.data);
+        switch (message.type) {
+            case 'level_update':
+                updateLevelMeters(message.levels);
+                break;
+            case 'node_created':
+                addNodeToGraph(message.nodeData);
+                break;
+        }
+    };
+    
+    const onNodeChange = (nodeId, parameter, value) => {
+        websocket.send(JSON.stringify({
+            type: 'parameter_update',
+            nodeId: nodeId,
+            parameter: parameter,
+            value: value
+        }));
+    };
+}
+```
+
+### Custom Node Components
+```javascript
+function OscillatorNode({ data }) {
+    const [frequency, setFrequency] = useState(data.frequency || 440);
+    const [waveform, setWaveform] = useState(data.waveform || 'sine');
+    
+    const handleFrequencyChange = (value) => {
+        setFrequency(value);
+        data.onParameterChange('frequency', value);
+    };
+    
+    return (
+        <div className="oscillator-node">
+            <Handle type="source" position={Position.Right} />
+            <div className="node-header">Oscillator</div>
+            <div className="node-controls">
+                <Knob 
+                    value={frequency} 
+                    min={20} 
+                    max={2000} 
+                    onChange={handleFrequencyChange}
+                    label="Frequency"
+                />
+                <Select 
+                    value={waveform} 
+                    onChange={(value) => {
+                        setWaveform(value);
+                        data.onParameterChange('waveform', value);
+                    }}
+                    options={['sine', 'square', 'sawtooth', 'triangle']}
+                />
+            </div>
+        </div>
+    );
+}
+```
+
+## Audio Processing Pipeline (C++ Backend)
 
 ### 1. Signal Flow Management
-- **Topological sorting**: Determine processing order
+- **Topological sorting**: Determine processing order in C++
 - **Dependency tracking**: Handle parameter connections
 - **Cycle detection**: Prevent infinite loops
 - **Latency compensation**: Align signals with different processing delays
 
 ### 2. Real-Time Processing
-- **Buffer management**: Efficient audio buffer handling
+- **Buffer management**: Efficient audio buffer handling in C++
 - **Thread safety**: Separate audio and UI threads
 - **Sample rate handling**: Support multiple sample rates
 - **Block size optimization**: Balance latency and efficiency
@@ -250,37 +460,142 @@ Node {
 - **Level meters**: Audio level monitoring
 - **CPU usage**: Performance monitoring
 
-## Implementation Roadmap
+## Implementation Roadmap (C++ Backend + JS Frontend)
 
 ### Phase 1: Core Foundation
-1. Basic node system with simple audio nodes
-2. Connection system with audio routing
-3. Simple parameter system
-4. Basic GUI with node placement and connection
+**C++ Backend:**
+1. Basic audio engine with JUCE/RtAudio integration
+2. Simple node system (oscillator, mixer, output)
+3. WebSocket server for communication
+4. Basic parameter system with atomic updates
 
-### Phase 2: Audio Processing
-1. Comprehensive audio processing pipeline
-2. Real-time audio engine integration
-3. MIDI support
-4. Basic effects and generators
+**JavaScript Frontend:**
+1. React Flow node editor setup
+2. WebSocket client connection
+3. Basic node types (oscillator, mixer, output)
+4. Simple parameter controls (sliders, knobs)
 
-### Phase 3: Advanced UI
-1. Professional-grade GUI components
-2. Advanced parameter control
-3. Visual feedback systems
-4. Performance optimizations
+### Phase 2: Audio Processing & Communication
+**C++ Backend:**
+1. Complete audio processing pipeline
+2. Node graph management with topological sorting
+3. Real-time parameter updates
+4. MIDI input/output support
 
-### Phase 4: Professional Features
-1. Project management
-2. Preset system
-3. Export/import capabilities
+**JavaScript Frontend:**
+1. Real-time parameter synchronization
+2. Visual connection management
+3. Node library expansion
+4. Real-time level meters and feedback
+
+### Phase 3: Advanced Features
+**C++ Backend:**
+1. Advanced DSP nodes (filters, effects, modulators)
+2. Audio file loading and streaming
+3. Multi-threading optimization
 4. Plugin system foundation
 
+**JavaScript Frontend:**
+1. Advanced UI components (waveform displays, spectrum analyzer)
+2. Drag-and-drop node creation
+3. Parameter automation curves
+4. Project save/load functionality
+
+### Phase 4: Professional Features
+**C++ Backend:**
+1. Audio recording and export
+2. Advanced timing and sync
+3. Performance profiling tools
+4. External plugin support
+
+**JavaScript Frontend:**
+1. Professional-grade parameter controls
+2. Advanced visualization tools
+3. Preset management system
+4. Keyboard shortcuts and workflow improvements
+
 ### Phase 5: Polish and Extension
-1. Advanced scripting support
-2. Community features
-3. Mobile/touch support
-4. Cloud integration
+**C++ Backend:**
+1. Cross-platform audio driver support
+2. Advanced memory management
+3. Hot-swappable plugin system
+4. Performance optimization
+
+**JavaScript Frontend:**
+1. Mobile-responsive design
+2. Advanced theme system
+3. Community features
+4. Advanced workflow tools
+
+## Development Setup
+
+### C++ Backend Setup
+```bash
+# Install dependencies
+sudo apt-get install libjuce-dev libasound2-dev
+
+# CMake structure
+mkdir audio_engine
+cd audio_engine
+cmake -S . -B build
+cmake --build build
+```
+
+### JavaScript Frontend Setup
+```bash
+# React application with node editor
+npx create-react-app audio-node-editor
+cd audio-node-editor
+npm install react-flow-renderer socket.io-client
+npm start
+```
+
+### Project Structure
+```
+audio-node-system/
+├── backend/                 # C++ audio engine
+│   ├── src/
+│   │   ├── AudioEngine.cpp
+│   │   ├── NodeManager.cpp
+│   │   ├── WebSocketServer.cpp
+│   │   └── nodes/
+│   │       ├── OscillatorNode.cpp
+│   │       ├── FilterNode.cpp
+│   │       └── MixerNode.cpp
+│   ├── include/
+│   └── CMakeLists.txt
+├── frontend/                # JavaScript UI
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── NodeEditor.js
+│   │   │   ├── CustomNodes/
+│   │   │   └── ParameterControls/
+│   │   ├── services/
+│   │   │   └── WebSocketService.js
+│   │   └── App.js
+│   └── package.json
+└── README.md
+```
+
+## Performance Considerations
+
+### Backend Optimization
+- **Lock-free programming**: Use atomic operations for parameter updates
+- **Memory pooling**: Reuse audio buffers to avoid allocations
+- **SIMD optimization**: Use vectorized operations for DSP
+- **Thread affinity**: Pin audio thread to specific CPU cores
+
+### Frontend Optimization
+- **Virtual scrolling**: Handle large node graphs efficiently
+- **Debounced updates**: Limit parameter update frequency
+- **Canvas optimization**: Use hardware acceleration for node rendering
+- **State management**: Efficient Redux/Context state handling
+
+### Communication Optimization
+- **Binary protocols**: Use MessagePack for faster serialization
+- **Update batching**: Group related parameter changes
+- **Compression**: Compress large state synchronization messages
+- **Connection pooling**: Reuse WebSocket connections efficiently
 
 ## Similar Systems for Reference
 
