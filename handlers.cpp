@@ -1,3 +1,5 @@
+#pragma once
+
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -233,13 +235,16 @@ private:
 };
 
 
+class AudioEngine; // Forward declaration
+
 class ServerHandler {
 public:
     ServerHandler(std::shared_ptr<SoundGenerator> soundGeneratorPtr,
                   const VoiceGeneratorRepository& voiceRepo,
-                  std::shared_ptr<ActiveTones> activeTonesPtr)
+                  std::shared_ptr<ActiveTones> activeTonesPtr,
+                  AudioEngine* audioEnginePtr = nullptr)
         : soundGenerator(soundGeneratorPtr), voiceGeneratorRepo(voiceRepo),
-          activeTones(activeTonesPtr) {}
+          activeTones(activeTonesPtr), audioEngine(audioEnginePtr) {}
 
     bool initialize() {
         // Get the executable's path
@@ -271,6 +276,13 @@ public:
         httpAPIHandler->setVoiceChangeCallback([this](const std::string& voiceName) {
             changeVoiceGenerator(voiceName);
         });
+        
+        // Set up waveform data callback if audio engine is available
+        if (audioEngine) {
+            httpAPIHandler->setWaveformDataCallback([this]() -> std::vector<float> {
+                return audioEngine->getWaveformData();
+            });
+        }
 
         // Create and configure static server
         staticServer = std::make_unique<StaticServer>("./", 8080);
@@ -304,6 +316,7 @@ private:
     std::shared_ptr<SoundGenerator> soundGenerator;
     const VoiceGeneratorRepository& voiceGeneratorRepo;
     std::shared_ptr<ActiveTones> activeTones;
+    AudioEngine* audioEngine;
     std::unique_ptr<StaticServer> staticServer;
     std::shared_ptr<SSEServer> sseServer;
     std::shared_ptr<HTTPAPIHandler> httpAPIHandler;

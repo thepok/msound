@@ -3,16 +3,29 @@
     "tasks": [
         {
             "type": "shell",
-            "label": "g++ build active file",
-            "command": "g++",
+            "label": "Prepare bin directory",
+            "command": "cmd",
             "args": [
+                "/c",
+                "if not exist \"${workspaceFolder}\\bin\" mkdir \"${workspaceFolder}\\bin\""
+            ],
+            "problemMatcher": []
+        },
+        {
+            "type": "cppbuild",
+            "label": "C/C++: Build Msound to bin",
+            "command": "D:\\compiler\\mingw64\\bin\\g++.exe",
+            "args": [
+                "-fdiagnostics-color=always",
                 "-g",
-                "${file}",
+                "-static-libgcc",
+                "-static-libstdc++",
+                "main.cpp",
+                "SSEServer.cpp",
                 "StaticServer.cpp",
-                "SSEServer.cpp", 
                 "HTTPAPIHandler.cpp",
                 "-o",
-                "${fileDirname}\\${fileBasenameNoExtension}.exe",
+                "${workspaceFolder}\\bin\\Msound.exe",
                 "-I.",        // Add current directory to include path
                 "-Wall",      // Enable all compiler's warning messages
                 "-fpermissive", // Allow more permissive type conversions
@@ -28,49 +41,39 @@
             "options": {
                 "cwd": "${workspaceFolder}"
             },
-            "problemMatcher": [
-                "$gcc"
+            "dependsOn": [
+                "Prepare bin directory"
             ],
-            "group": "build"
-        },
-        {
-            "type": "cppbuild",
-            "label": "C/C++: g++.exe build active file",
-            "command": "D:\\compiler\\mingw64\\bin\\g++.exe",
-            "args": [
-                "-fdiagnostics-color=always",
-                "-g",
-                "-static-libgcc",
-                "-static-libstdc++",
-                "${file}",
-                "StaticServer.cpp",
-                "SSEServer.cpp", 
-                "HTTPAPIHandler.cpp",
-                "-o",
-                "${fileDirname}\\${fileBasenameNoExtension}.exe",
-                "-I.",        // Add current directory to include path
-                "-Wall",      // Enable all compiler's warning messages
-                "-fpermissive", // Allow more permissive type conversions
-                "-lpthread",  // Link pthread library (if needed)
-                "-lole32",
-                "-loleaut32",
-                "-luuid",
-                "-lmmdevapi",
-                "-lavrt",
-                "-lwinmm",
-                "-lws2_32"    // Link Winsock library
-            ],
-            "options": {
-                "cwd": "${fileDirname}"
-            },
             "problemMatcher": [
                 "$gcc"
             ],
             "group": {
                 "kind": "build",
-                "isDefault": true
+                "isDefault": false
             },
             "detail": "Build with SSE+API system (no CivetWeb)"
+        },
+        {
+            "type": "shell",
+            "label": "Copy GUI to bin",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "copy /Y \"${workspaceFolder}\\gui.html\" \"${workspaceFolder}\\bin\\\""
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Build Msound (bin + gui)",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "C/C++: Build Msound to bin",
+                "Copy GUI to bin"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
         }
     ]
 }

@@ -1,7 +1,3 @@
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#endif
 #include <windows.h>
 #include <inttypes.h>
 #include <math.h>
@@ -53,6 +49,12 @@ class AudioEngine;
 // AudioEngine class with adjusted constructor and processAudio method
 class AudioEngine {
 public:
+    // Waveform buffer for the last 100ms (4410 samples at 44100 Hz)
+    static constexpr int WAVEFORM_BUFFER_SIZE = SAMPLES_PER_SECOND / 10; // 100ms = 4410 samples
+    std::array<float, WAVEFORM_BUFFER_SIZE> waveformBuffer;
+    std::atomic<int> waveformBufferIndex{0};
+    mutable std::mutex waveformMutex;
+    
     AudioEngine(std::shared_ptr<SoundGenerator> generator)
         : soundGenerator(generator),
           running(true),
@@ -63,7 +65,9 @@ public:
           mixFormat(nullptr),
           defaultDevicePeriod(0),
           minDevicePeriod(0),
-          bufferSampleCount(0) {}
+          bufferSampleCount(0) {
+        waveformBuffer.fill(0.0f);
+    }
 
     ~AudioEngine() {
         shutdown();
@@ -195,6 +199,14 @@ public:
                     outputSample = std::tanh(outputSample);
 
                     floatBuffer[i] = outputSample;
+                    
+                    // Store sample in waveform buffer
+                    {
+                        std::lock_guard<std::mutex> lock(waveformMutex);
+                        int index = waveformBufferIndex.load();
+                        waveformBuffer[index] = outputSample;
+                        waveformBufferIndex = (index + 1) % WAVEFORM_BUFFER_SIZE;
+                    }
                 }
 
                 hr = renderClient->ReleaseBuffer(availableSamples, 0);
@@ -242,6 +254,22 @@ public:
         }
         CoUninitialize();
     }
+    
+    // Get waveform data for visualization
+    std::vector<float> getWaveformData() const {
+        std::lock_guard<std::mutex> lock(waveformMutex);
+        std::vector<float> result;
+        result.reserve(WAVEFORM_BUFFER_SIZE);
+        
+        int currentIndex = waveformBufferIndex.load();
+        // Read from current position backwards to get the most recent samples first
+        for (int i = 0; i < WAVEFORM_BUFFER_SIZE; ++i) {
+            int readIndex = (currentIndex - 1 - i + WAVEFORM_BUFFER_SIZE) % WAVEFORM_BUFFER_SIZE;
+            result.push_back(waveformBuffer[readIndex]);
+        }
+        
+        return result;
+    }
 
 private:
     std::shared_ptr<SoundGenerator> soundGenerator;
@@ -283,8 +311,15 @@ int main()
     auto interpolatedChorus = std::make_shared<InterpolatedChorus>(tremolo, 0.5f, 0.5f, 0.5f, 0.5f);
     auto final = activeTones;
 
-    // Update the ServerHandler initialization to pass the VoiceGeneratorRepository and ActiveTones
-    ServerHandler serverHandler(final, voiceRepo, activeTones);
+    // Initialize the audio engine
+    AudioEngine audioEngine(final);
+    if (!audioEngine.initialize()) {
+        std::cerr << "Failed to initialize audio engine." << std::endl;
+        return 1;
+    }
+
+    // Update the ServerHandler initialization to pass the VoiceGeneratorRepository, ActiveTones, and AudioEngine
+    ServerHandler serverHandler(final, voiceRepo, activeTones, &audioEngine);
     serverHandler.initialize();
     
     // Initialize KeyboardHandler
@@ -295,12 +330,6 @@ int main()
     MidiHandler midiHandler(activeTones);
     if (!midiHandler.initialize()) {
         std::cerr << "Failed to initialize MIDI handler." << std::endl;
-    }
-    // Initialize the audio engine
-    AudioEngine audioEngine(final);
-    if (!audioEngine.initialize()) {
-        std::cerr << "Failed to initialize audio engine." << std::endl;
-        return 1;
     }
     // Start audio processing in a separate thread
     std::thread audioThread(&AudioEngine::processAudio, &audioEngine);

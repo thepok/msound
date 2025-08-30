@@ -17,7 +17,15 @@ void HTTPAPIHandler::setVoiceChangeCallback(VoiceChangeCallback callback) {
     voiceChangeCallback = callback;
 }
 
+void HTTPAPIHandler::setWaveformDataCallback(WaveformDataCallback callback) {
+    waveformDataCallback = callback;
+}
+
 bool HTTPAPIHandler::handleAPIRequest(socket_t clientSocket, const std::string& method, const std::string& path, const std::string& body) {
+    if (method == "GET" && path == "/api/waveform") {
+        return handleWaveformRequest(clientSocket);
+    }
+    
     if (method != "POST") {
         sendErrorResponse(clientSocket, 405, "Method Not Allowed");
         return true;
@@ -160,4 +168,33 @@ float HTTPAPIHandler::parseFloat(const std::string& str) {
     } catch (const std::out_of_range& e) {
         throw std::runtime_error("Float out of range: " + str);
     }
+}
+
+bool HTTPAPIHandler::handleWaveformRequest(socket_t clientSocket) {
+    try {
+        if (!waveformDataCallback) {
+            sendErrorResponse(clientSocket, 500, "Waveform data not available");
+            return true;
+        }
+        
+        std::vector<float> waveformData = waveformDataCallback();
+        
+        std::ostringstream json;
+        json << "{\"waveform\":[";
+        for (size_t i = 0; i < waveformData.size(); ++i) {
+            json << waveformData[i];
+            if (i < waveformData.size() - 1) {
+                json << ",";
+            }
+        }
+        json << "]}";
+        
+        sendJSONResponse(clientSocket, 200, json.str());
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error handling waveform request: " << e.what() << std::endl;
+        sendErrorResponse(clientSocket, 500, "Internal server error");
+    }
+    
+    return true;
 } 

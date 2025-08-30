@@ -5,8 +5,8 @@
 #include <iostream>
 #include <functional>
 #include <algorithm>
-#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include "SoundGenerator.cpp"
 
 class ADSRGenerator : public SoundGenerator {
@@ -61,7 +61,7 @@ public:
         sourceGenerator->noteOn(1.0f);
         stage = Stage::Attack;
         attackStartAmplitude = currentAmplitude; // Start from current amplitude
-        stageStartTime = std::chrono::steady_clock::now();
+        samplesSinceStageStart = 0;
         active = true;
     }
 
@@ -69,11 +69,11 @@ public:
         sourceGenerator->noteOff();
         if (stage == Stage::Attack) {
             stage = Stage::Release;
-            stageStartTime = std::chrono::steady_clock::now();
+            samplesSinceStageStart = 0;
             releaseStartAmplitude = currentAmplitude;
         } else {
             stage = Stage::Release;
-            stageStartTime = std::chrono::steady_clock::now();
+            samplesSinceStageStart = 0;
             releaseStartAmplitude = (stage == Stage::Sustain) ? sustainLevel : currentAmplitude;
         }
     }
@@ -103,36 +103,36 @@ private:
     float releaseStartAmplitude;
     float attackStartAmplitude;
     float decayStartAmplitude;
-    std::chrono::steady_clock::time_point stageStartTime;
+    uint64_t samplesSinceStageStart;
 
     bool active;
     bool deactivationRequested;
 
     void updateEnvelope(float sampleRate) {
-        auto now = std::chrono::steady_clock::now();
-        float elapsed = std::chrono::duration<float>(now - stageStartTime).count();
+        Stage previousStage = stage;
+        float elapsedSeconds = (sampleRate > 0.0f) ? (static_cast<float>(samplesSinceStageStart) / sampleRate) : 0.0f;
 
         switch (stage) {
             case Stage::Attack:
                 if (attackTime > 0.0f) {
-                    currentAmplitude = attackStartAmplitude + (1.0f - attackStartAmplitude) * (elapsed / attackTime);
+                    currentAmplitude = attackStartAmplitude + (1.0f - attackStartAmplitude) * (elapsedSeconds / attackTime);
                     if (currentAmplitude >= 1.0f) {
                         currentAmplitude = 1.0f;
                         stage = Stage::Decay;
-                        stageStartTime = now;
+                        samplesSinceStageStart = 0;
                         decayStartAmplitude = currentAmplitude; // Set decay start amplitude
                     }
                 } else {
                     currentAmplitude = 1.0f;
                     stage = Stage::Decay;
-                    stageStartTime = now;
+                    samplesSinceStageStart = 0;
                     decayStartAmplitude = currentAmplitude; // Set decay start amplitude
                 }
                 break;
             case Stage::Decay:
                 if (decayTime > 0.0f) {
-                    currentAmplitude = decayStartAmplitude - (decayStartAmplitude - sustainLevel) * (elapsed / decayTime);
-                    if (elapsed >= decayTime) {
+                    currentAmplitude = decayStartAmplitude - (decayStartAmplitude - sustainLevel) * (elapsedSeconds / decayTime);
+                    if (elapsedSeconds >= decayTime) {
                         currentAmplitude = sustainLevel;
                         stage = Stage::Sustain;
                     }
@@ -146,8 +146,8 @@ private:
                 break;
             case Stage::Release:
                 if (releaseTime > 0.0f) {
-                    currentAmplitude = releaseStartAmplitude * (1.0f - (elapsed / releaseTime));
-                    if (elapsed >= releaseTime) {
+                    currentAmplitude = releaseStartAmplitude * (1.0f - (elapsedSeconds / releaseTime));
+                    if (elapsedSeconds >= releaseTime) {
                         currentAmplitude = 0.0f;
                         stage = Stage::Idle;
                         active = false;
@@ -164,5 +164,9 @@ private:
         }
 
         currentAmplitude = std::clamp(currentAmplitude, 0.0f, 1.0f);
+
+        if (stage == previousStage && stage != Stage::Idle) {
+            ++samplesSinceStageStart;
+        }
     }
 };
