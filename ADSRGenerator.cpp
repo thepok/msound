@@ -67,15 +67,10 @@ public:
 
     void noteOff() override {
         sourceGenerator->noteOff();
-        if (stage == Stage::Attack) {
-            stage = Stage::Release;
-            samplesSinceStageStart = 0;
-            releaseStartAmplitude = currentAmplitude;
-        } else {
-            stage = Stage::Release;
-            samplesSinceStageStart = 0;
-            releaseStartAmplitude = (stage == Stage::Sustain) ? sustainLevel : currentAmplitude;
-        }
+        Stage preReleaseStage = stage;
+        stage = Stage::Release;
+        samplesSinceStageStart = 0;
+        releaseStartAmplitude = (preReleaseStage == Stage::Sustain) ? sustainLevel : currentAmplitude;
     }
 
     bool isActive() const {
