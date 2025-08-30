@@ -26,34 +26,31 @@ public:
     float generateSample(float sampleRate) override {
         std::lock_guard<std::mutex> lock(tonesMutex);
         float sample = 0.0f;
-        int activeToneCount = 0;
+        int loudToneCount = 0;
 
         for (auto& adsrGenerator : activeTones) {
             float temp_sample = adsrGenerator->generateSample(sampleRate);
-            if (temp_sample != 0.0f) {
-                sample += temp_sample;
-                ++activeToneCount;
+            sample += temp_sample;
+            if (std::fabs(temp_sample) > 1e-4f) { // gate out very quiet voices (~-80 dB)
+                ++loudToneCount;
             }
         }
 
-        // Improved volume normalization for chord handling
+        // 1/sqrt(N_loud) normalization
         float targetGainFactor = 1.0f;
-        if (activeToneCount > 0) {
-            // Use a combination of sqrt normalization and logarithmic scaling for better chord balance
-            float sqrtNorm = 1.0f / std::sqrt(static_cast<float>(activeToneCount));
-            float logNorm = 1.0f / (1.0f + 0.3f * std::log(static_cast<float>(activeToneCount)));
-            targetGainFactor = sqrtNorm * logNorm;
+        if (loudToneCount > 0) {
+            targetGainFactor = 1.0f / std::sqrt(static_cast<float>(loudToneCount));
         }
-        
-        // Smooth the gain factor transition
-        float smoothingFactor = 0.001f;  // Adjust this value to control smoothing speed
-        smoothedGainFactor += smoothingFactor * (targetGainFactor - smoothedGainFactor);
+
+        // Time-constant smoothing (~10 ms), sample-rate aware
+        const float tauSeconds = 0.010f;
+        float alpha = 0.0f;
+        if (sampleRate > 0.0f) {
+            alpha = std::exp(-1.0f / (tauSeconds * sampleRate));
+        }
+        smoothedGainFactor = alpha * smoothedGainFactor + (1.0f - alpha) * targetGainFactor;
 
         sample *= smoothedGainFactor;
-        
-        // Soft saturation instead of hard tanh for more musical distortion
-        sample = sample / (1.0f + std::abs(sample) * 0.3f);
-        
         return sample;
     }
 

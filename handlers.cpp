@@ -188,7 +188,7 @@ private:
                     // Key Down Event
                     keyStates[key] = true;
                     float frequency = 440.0f * powf(2.0f, (midiNote - 69) / 12.0f);
-                    float volume = 100.0f / 127.0f; // Normalize velocity 100 to [0.0, 1.0]
+                    float volume = 0.3f;
                     activeTones->noteOn(midiNote, 0, frequency, volume); // Channel 0 for keyboard
                 }
                 else if (!isPressed && keyStates[key]) {

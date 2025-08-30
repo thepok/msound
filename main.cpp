@@ -1,4 +1,3 @@
-#include <windows.h>
 #include <inttypes.h>
 #include <math.h>
 #include <mmdeviceapi.h>

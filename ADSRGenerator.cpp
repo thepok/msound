@@ -23,6 +23,7 @@ public:
           releaseTime(release),
           stage(Stage::Idle),
           currentAmplitude(0.0f),
+          velocityGain(1.0f),
           active(false),
           deactivationRequested(false) {
         
@@ -54,11 +55,12 @@ public:
         // Update envelope on every sample for accurate timing
         updateEnvelope(sampleRate);
 
-        return sample * currentAmplitude;
+        return sample * currentAmplitude * velocityGain;
     }
 
     void noteOn(float velocity) override {
-        sourceGenerator->noteOn(1.0f);
+        velocityGain = std::clamp(velocity, 0.0f, 1.0f);
+        sourceGenerator->noteOn(velocityGain);
         stage = Stage::Attack;
         attackStartAmplitude = currentAmplitude; // Start from current amplitude
         samplesSinceStageStart = 0;
@@ -95,6 +97,7 @@ private:
 
     Stage stage;
     float currentAmplitude;
+    float velocityGain;
     float releaseStartAmplitude;
     float attackStartAmplitude;
     float decayStartAmplitude;
